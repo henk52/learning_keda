@@ -67,3 +67,10 @@ Project versioning information and stability guarantees can be found here.
 
 - cargo add opentelemetry_semantic_conventions --features semconv_experimental
 - cargo add opentelemetry-stdout
+
+
+
+curl -X POST http://localhost:8080/slow -H "Content-Type: application/json" -d '{"sleep_ms": 900}'
+curl -X POST http://localhost:8080/fast -H "Content-Type: application/json" -d '{"sleep_ms": 8}'
+curl http://localhost:8080/fast
+curl http://localhost:8080/slow

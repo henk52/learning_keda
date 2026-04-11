@@ -43,7 +43,7 @@ services:
     environment:
       - K6_OTEL_EXPORTER_TYPE=http
       - K6_OTEL_HTTP_EXPORTER_ENDPOINT=http://otel-lgtm:4318
-    command: run /k6_tests/test_api_service_health.js
+    command: run /k6_tests/test_api_server_fast_and_slow.js
     depends_on:
       otel-lgtm:
         condition: service_healthy

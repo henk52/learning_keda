@@ -1,10 +1,13 @@
+#[allow(unused_imports)]
 use axum::{
     Router,
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post},
+    routing::get,
 };
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::time::Duration;
 use log::{Level, info};
 use opentelemetry::{
     KeyValue, global,
@@ -173,6 +176,22 @@ fn init_metrics() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'stati
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct SleepConfig {
+    sleep_ms: u64,
+}
+
+#[derive(Serialize)]
+struct SleepResponse {
+    slept_ms: u64,
+    timestamp: String,
+}
+
+struct AppState {
+    fast_sleep_ms: AtomicU64,
+    slow_sleep_ms: AtomicU64,
+}
+
 #[derive(Serialize, Deserialize)]
 struct HealthResponse {
     status: String,
@@ -180,39 +199,6 @@ struct HealthResponse {
     service: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct SessionRequest {
-    username: String,
-    password: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SessionResponse {
-    session_id: String,
-    expires_at: String,
-    username: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct User {
-    id: u32,
-    username: String,
-    email: String,
-    created_at: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct UserCreateRequest {
-    username: String,
-    email: String,
-    password: String,
-}
-
-#[derive(Deserialize)]
-struct UserQuery {
-    limit: Option<u32>,
-    offset: Option<u32>,
-}
 
 async fn health_handler() -> Json<HealthResponse> {
     // Grabs the global tracer
@@ -249,213 +235,73 @@ async fn health_handler() -> Json<HealthResponse> {
     Json(response)
 }
 
-async fn create_session(
-    Json(payload): Json<SessionRequest>,
-) -> Result<Json<SessionResponse>, StatusCode> {
+async fn fast_get_handler(State(state): State<Arc<AppState>>) -> Json<SleepResponse> {
     let tracer = global::tracer("api-service");
-    let mut span = tracer.start("create_session");
-
-    span.set_attribute(KeyValue::new("http.method", "POST"));
-    span.set_attribute(KeyValue::new("http.route", "/session"));
-    span.set_attribute(KeyValue::new("user.name", payload.username.clone()));
-
-    // Simple authentication check (in real app, validate against database)
-    if payload.username.is_empty() || payload.password.is_empty() {
-        emit_log(
-            "ERROR",
-            "create_session",
-            "Session creation failed - empty username or password",
-            vec![KeyValue::new("username", payload.username.clone())],
-        );
-
-        span.set_status(Status::error("Empty username or password"));
-        span.set_attribute(KeyValue::new("error", "empty_credentials"));
-        span.end();
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // Mock session creation
-    let session_response = SessionResponse {
-        session_id: uuid::Uuid::new_v4().to_string(),
-        expires_at: (chrono::Utc::now() + chrono::Duration::hours(24)).to_rfc3339(),
-        username: payload.username.clone(),
-    };
-
-    emit_log(
-        "INFO",
-        "create_session",
-        "Session created successfully",
-        vec![
-            KeyValue::new("username", payload.username),
-            KeyValue::new("session_id", session_response.session_id.clone()),
-        ],
-    );
-
-    span.set_attribute(KeyValue::new(
-        "session.id",
-        session_response.session_id.clone(),
-    ));
-    span.set_status(Status::Ok);
-    span.end();
-
-    Ok(Json(session_response))
-}
-
-async fn get_session(Path(session_id): Path<String>) -> Result<Json<SessionResponse>, StatusCode> {
-    let tracer = global::tracer("api-service");
-    let mut span = tracer.start("get_session");
-
+    let mut span = tracer.start("fast_get");
     span.set_attribute(KeyValue::new("http.method", "GET"));
-    span.set_attribute(KeyValue::new("http.route", "/session/{id}"));
-    span.set_attribute(KeyValue::new("session.id", session_id.clone()));
+    span.set_attribute(KeyValue::new("http.route", "/fast"));
 
-    if session_id.is_empty() {
-        span.set_status(Status::error("Empty session ID"));
-        span.set_attribute(KeyValue::new("error", "empty_session_id"));
-        span.end();
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let sleep_ms = state.fast_sleep_ms.load(Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
-    // Mock session retrieval (in real app, get from database/cache)
-    let session_response = SessionResponse {
-        session_id,
-        expires_at: (chrono::Utc::now() + chrono::Duration::hours(12)).to_rfc3339(),
-        username: "mock_user".to_string(),
-    };
-
-    span.set_status(Status::Ok);
+    span.set_attribute(KeyValue::new("sleep_ms", sleep_ms as i64));
+    span.set_status(opentelemetry::trace::Status::Ok);
     span.end();
 
-    Ok(Json(session_response))
+    Json(SleepResponse {
+        slept_ms: sleep_ms,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
-async fn get_users(Query(params): Query<UserQuery>) -> Json<Vec<User>> {
+async fn fast_post_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SleepConfig>,
+) -> StatusCode {
+    state.fast_sleep_ms.store(body.sleep_ms, Ordering::Relaxed);
+    emit_log("INFO", "fast_post", "Updated fast sleep_ms", vec![KeyValue::new("sleep_ms", body.sleep_ms.to_string())]);
+    StatusCode::OK
+}
+
+async fn slow_get_handler(State(state): State<Arc<AppState>>) -> Json<SleepResponse> {
     let tracer = global::tracer("api-service");
-    let mut span = tracer.start("get_users");
-
-    let limit = params.limit.unwrap_or(10);
-    let offset = params.offset.unwrap_or(0);
-
+    let mut span = tracer.start("slow_get");
     span.set_attribute(KeyValue::new("http.method", "GET"));
-    span.set_attribute(KeyValue::new("http.route", "/user"));
-    span.set_attribute(KeyValue::new("query.limit", limit as i64));
-    span.set_attribute(KeyValue::new("query.offset", offset as i64));
+    span.set_attribute(KeyValue::new("http.route", "/slow"));
 
-    // Mock users data
-    let users: Vec<User> = vec![
-        User {
-            id: 1 + offset,
-            username: "alice".to_string(),
-            email: "alice@example.com".to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        },
-        User {
-            id: 2 + offset,
-            username: "bob".to_string(),
-            email: "bob@example.com".to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        },
-    ]
-    .into_iter()
-    .take(limit as usize)
-    .collect();
+    let sleep_ms = state.slow_sleep_ms.load(Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
-    span.set_attribute(KeyValue::new("users.count", users.len() as i64));
-    span.set_status(Status::Ok);
+    span.set_attribute(KeyValue::new("sleep_ms", sleep_ms as i64));
+    span.set_status(opentelemetry::trace::Status::Ok);
     span.end();
 
-    Json(users)
+    Json(SleepResponse {
+        slept_ms: sleep_ms,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
-async fn get_user(Path(user_id): Path<u32>) -> Result<Json<User>, StatusCode> {
-    let tracer = global::tracer("api-service");
-    let mut span = tracer.start("get_user");
-
-    span.set_attribute(KeyValue::new("http.method", "GET"));
-    span.set_attribute(KeyValue::new("http.route", "/user/{id}"));
-    span.set_attribute(KeyValue::new("user.id", user_id as i64));
-
-    if user_id == 0 {
-        span.set_status(Status::error("Invalid user ID: 0"));
-        span.set_attribute(KeyValue::new("error", "invalid_user_id"));
-        span.end();
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // Mock user retrieval
-    let user = User {
-        id: user_id,
-        username: format!("user_{}", user_id),
-        email: format!("user_{}@example.com", user_id),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-
-    span.set_attribute(KeyValue::new("user.name", user.username.clone()));
-    span.set_status(Status::Ok);
-    span.end();
-
-    Ok(Json(user))
-}
-
-async fn create_user(Json(payload): Json<UserCreateRequest>) -> Result<Json<User>, StatusCode> {
-    let tracer = global::tracer("api-service");
-    let mut span = tracer.start("create_user");
-
-    span.set_attribute(KeyValue::new("http.method", "POST"));
-    span.set_attribute(KeyValue::new("http.route", "/user"));
-    span.set_attribute(KeyValue::new("user.name", payload.username.clone()));
-    span.set_attribute(KeyValue::new("user.email", payload.email.clone()));
-
-    if payload.username.is_empty() || payload.email.is_empty() {
-        emit_log(
-            "ERROR",
-            "create_user",
-            "User creation failed - empty username or email",
-            vec![
-                KeyValue::new("username", payload.username.clone()),
-                KeyValue::new("email", payload.email.clone()),
-            ],
-        );
-
-        span.set_status(Status::error("Empty username or email"));
-        span.set_attribute(KeyValue::new("error", "empty_fields"));
-        span.end();
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // Mock user creation
-    let user = User {
-        id: 999, // Mock ID
-        username: payload.username.clone(),
-        email: payload.email.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-
-    emit_log(
-        "INFO",
-        "create_user",
-        "User created successfully",
-        vec![
-            KeyValue::new("user_id", user.id.to_string()),
-            KeyValue::new("username", payload.username),
-            KeyValue::new("email", payload.email),
-        ],
-    );
-
-    span.set_attribute(KeyValue::new("user.id", user.id as i64));
-    span.set_status(Status::Ok);
-    span.end();
-
-    Ok(Json(user))
+async fn slow_post_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SleepConfig>,
+) -> StatusCode {
+    state.slow_sleep_ms.store(body.sleep_ms, Ordering::Relaxed);
+    emit_log("INFO", "slow_post", "Updated slow sleep_ms", vec![KeyValue::new("sleep_ms", body.sleep_ms.to_string())]);
+    StatusCode::OK
 }
 
 fn create_app() -> Router {
+    let state = Arc::new(AppState {
+        fast_sleep_ms: AtomicU64::new(10),
+        slow_sleep_ms: AtomicU64::new(500),
+    });
+
     Router::new()
         .route("/health", get(health_handler))
-        .route("/session", post(create_session))
-        .route("/session/{id}", get(get_session))
-        .route("/user", get(get_users).post(create_user))
-        .route("/user/{id}", get(get_user))
+        .route("/fast", get(fast_get_handler).post(fast_post_handler))
+        .route("/slow", get(slow_get_handler).post(slow_post_handler))
+        .with_state(state)
 }
 
 //            #     #    #      ###   #     #
@@ -516,12 +362,11 @@ async fn main() {
 
     println!("API server listening on http://0.0.0.0:8080");
     println!("Available endpoints:");
-    println!("  GET  /health - Health check");
-    println!("  POST /session - Create session");
-    println!("  GET  /session/{{id}} - Get session");
-    println!("  GET  /user - List users (with optional ?limit=N&offset=N)");
-    println!("  POST /user - Create user");
-    println!("  GET  /user/{{id}} - Get user by ID");
+    println!("  GET  /health       - Health check");
+    println!("  GET  /fast         - Sleep for fast_sleep_ms (default 10ms)");
+    println!("  POST /fast         - Set fast sleep_ms: {{\"sleep_ms\": N}}");
+    println!("  GET  /slow         - Sleep for slow_sleep_ms (default 500ms)");
+    println!("  POST /slow         - Set slow sleep_ms: {{\"sleep_ms\": N}}");
 
     axum::serve(listener, app)
         .await
@@ -538,6 +383,13 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
 
+    fn make_state(fast_ms: u64, slow_ms: u64) -> Arc<AppState> {
+        Arc::new(AppState {
+            fast_sleep_ms: AtomicU64::new(fast_ms),
+            slow_sleep_ms: AtomicU64::new(slow_ms),
+        })
+    }
+
     #[tokio::test]
     async fn test_health_handler() {
         let response = health_handler().await;
@@ -548,169 +400,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session_success() {
-        let session_request = SessionRequest {
-            username: "testuser".to_string(),
-            password: "testpass".to_string(),
-        };
-
-        let result = create_session(Json(session_request)).await;
-        assert!(result.is_ok());
-
-        let response = result.unwrap();
-        let session = response.0;
-        assert_eq!(session.username, "testuser");
-        assert!(!session.session_id.is_empty());
-        assert!(!session.expires_at.is_empty());
+    async fn test_fast_post_sets_sleep_ms() {
+        let state = make_state(10, 500);
+        let status = fast_post_handler(State(state.clone()), Json(SleepConfig { sleep_ms: 42 })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(state.fast_sleep_ms.load(Ordering::Relaxed), 42);
     }
 
     #[tokio::test]
-    async fn test_create_session_empty_username() {
-        let session_request = SessionRequest {
-            username: "".to_string(),
-            password: "testpass".to_string(),
-        };
-
-        let result = create_session(Json(session_request)).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
+    async fn test_fast_get_sleeps_and_returns() {
+        let state = make_state(0, 500); // 0ms so the test doesn't actually wait
+        let response = fast_get_handler(State(state)).await;
+        let body = response.0;
+        assert_eq!(body.slept_ms, 0);
+        assert!(!body.timestamp.is_empty());
     }
 
     #[tokio::test]
-    async fn test_create_session_empty_password() {
-        let session_request = SessionRequest {
-            username: "testuser".to_string(),
-            password: "".to_string(),
-        };
-
-        let result = create_session(Json(session_request)).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
+    async fn test_slow_post_sets_sleep_ms() {
+        let state = make_state(10, 500);
+        let status = slow_post_handler(State(state.clone()), Json(SleepConfig { sleep_ms: 900 })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(state.slow_sleep_ms.load(Ordering::Relaxed), 900);
     }
 
     #[tokio::test]
-    async fn test_get_session() {
-        let session_id = "test-session-123".to_string();
-        let result = get_session(Path(session_id.clone())).await;
-        assert!(result.is_ok());
-
-        let response = result.unwrap();
-        let session = response.0;
-        assert_eq!(session.session_id, session_id);
-        assert_eq!(session.username, "mock_user");
-        assert!(!session.expires_at.is_empty());
+    async fn test_slow_get_sleeps_and_returns() {
+        let state = make_state(10, 0); // 0ms so the test doesn't actually wait
+        let response = slow_get_handler(State(state)).await;
+        let body = response.0;
+        assert_eq!(body.slept_ms, 0);
+        assert!(!body.timestamp.is_empty());
     }
 
     #[tokio::test]
-    async fn test_get_session_empty_id() {
-        let result = get_session(Path("".to_string())).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
-    }
+    async fn test_fast_and_slow_state_are_independent() {
+        let state = make_state(10, 500);
+        fast_post_handler(State(state.clone()), Json(SleepConfig { sleep_ms: 77 })).await;
+        assert_eq!(state.fast_sleep_ms.load(Ordering::Relaxed), 77);
+        assert_eq!(state.slow_sleep_ms.load(Ordering::Relaxed), 500);
 
-    #[tokio::test]
-    async fn test_get_users_default() {
-        let query = UserQuery {
-            limit: None,
-            offset: None,
-        };
-
-        let response = get_users(Query(query)).await;
-        let users = response.0;
-        assert_eq!(users.len(), 2);
-        assert_eq!(users[0].username, "alice");
-        assert_eq!(users[1].username, "bob");
-    }
-
-    #[tokio::test]
-    async fn test_get_users_with_limit() {
-        let query = UserQuery {
-            limit: Some(1),
-            offset: None,
-        };
-
-        let response = get_users(Query(query)).await;
-        let users = response.0;
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0].username, "alice");
-    }
-
-    #[tokio::test]
-    async fn test_get_users_with_offset() {
-        let query = UserQuery {
-            limit: None,
-            offset: Some(5),
-        };
-
-        let response = get_users(Query(query)).await;
-        let users = response.0;
-        assert_eq!(users.len(), 2);
-        assert_eq!(users[0].id, 6); // 1 + offset 5
-        assert_eq!(users[1].id, 7); // 2 + offset 5
-    }
-
-    #[tokio::test]
-    async fn test_get_user_by_id() {
-        let user_id = 123;
-        let result = get_user(Path(user_id)).await;
-        assert!(result.is_ok());
-
-        let response = result.unwrap();
-        let user = response.0;
-        assert_eq!(user.id, user_id);
-        assert_eq!(user.username, format!("user_{}", user_id));
-        assert_eq!(user.email, format!("user_{}@example.com", user_id));
-    }
-
-    #[tokio::test]
-    async fn test_get_user_by_zero_id() {
-        let result = get_user(Path(0)).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_create_user_success() {
-        let user_request = UserCreateRequest {
-            username: "newuser".to_string(),
-            email: "newuser@example.com".to_string(),
-            password: "password123".to_string(),
-        };
-
-        let result = create_user(Json(user_request)).await;
-        assert!(result.is_ok());
-
-        let response = result.unwrap();
-        let user = response.0;
-        assert_eq!(user.username, "newuser");
-        assert_eq!(user.email, "newuser@example.com");
-        assert_eq!(user.id, 999);
-        assert!(!user.created_at.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_create_user_empty_username() {
-        let user_request = UserCreateRequest {
-            username: "".to_string(),
-            email: "test@example.com".to_string(),
-            password: "password123".to_string(),
-        };
-
-        let result = create_user(Json(user_request)).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_create_user_empty_email() {
-        let user_request = UserCreateRequest {
-            username: "testuser".to_string(),
-            email: "".to_string(),
-            password: "password123".to_string(),
-        };
-
-        let result = create_user(Json(user_request)).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
+        slow_post_handler(State(state.clone()), Json(SleepConfig { sleep_ms: 999 })).await;
+        assert_eq!(state.fast_sleep_ms.load(Ordering::Relaxed), 77);
+        assert_eq!(state.slow_sleep_ms.load(Ordering::Relaxed), 999);
     }
 }

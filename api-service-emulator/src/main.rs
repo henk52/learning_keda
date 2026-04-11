@@ -8,6 +8,7 @@ use axum::{
 };
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::Duration;
+use rand::Rng;
 use log::{Level, info};
 use opentelemetry::{
     KeyValue, global,
@@ -241,7 +242,8 @@ async fn fast_get_handler(State(state): State<Arc<AppState>>) -> Json<SleepRespo
     span.set_attribute(KeyValue::new("http.method", "GET"));
     span.set_attribute(KeyValue::new("http.route", "/fast"));
 
-    let sleep_ms = state.fast_sleep_ms.load(Ordering::Relaxed);
+    let base_ms = state.fast_sleep_ms.load(Ordering::Relaxed);
+    let sleep_ms = rand::thread_rng().gen_range(base_ms * 9 / 10..=base_ms * 11 / 10);
     tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
     span.set_attribute(KeyValue::new("sleep_ms", sleep_ms as i64));
@@ -269,7 +271,8 @@ async fn slow_get_handler(State(state): State<Arc<AppState>>) -> Json<SleepRespo
     span.set_attribute(KeyValue::new("http.method", "GET"));
     span.set_attribute(KeyValue::new("http.route", "/slow"));
 
-    let sleep_ms = state.slow_sleep_ms.load(Ordering::Relaxed);
+    let base_ms = state.slow_sleep_ms.load(Ordering::Relaxed);
+    let sleep_ms = rand::thread_rng().gen_range(base_ms * 3 / 4..=base_ms * 5 / 4);
     tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
     span.set_attribute(KeyValue::new("sleep_ms", sleep_ms as i64));

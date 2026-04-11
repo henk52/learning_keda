@@ -122,8 +122,5 @@ Usage: `docker compose run k6 run /scripts/my_yest.js`
 TODO remember to '--build' if the rust app have been updatd.
 docker compose up --build
 
-- Implement api-emulator
-  - create a couple of paths for quick and slow responses
-  - create new test .js
 - How to deploy to minikube.
 - use kedra to scale the api-emulator.

@@ -1,0 +1,50 @@
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM rust:1.92-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies needed by tonic/opentelemetry-otlp (protobuf compiler)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# TODO why the rm at the end.
+
+
+# TODO why copy the other crates?
+
+# Copy workspace manifests first to cache dependency compilation
+COPY Cargo.toml Cargo.lock* ./
+
+# TODO can I remove this?
+# Create stub main files so Cargo can resolve the workspace without real source
+RUN mkdir -p src     && echo 'fn main(){}' > src/main.rs 
+
+# Pre-build dependencies (cache layer)
+RUN cargo build --release -p api-service
+
+# TODO why does it have to do this?
+# Now copy the real source and rebuild only api-service
+COPY src src
+# Touch the file so Cargo detects the change
+RUN touch src/main.rs \
+ && cargo build --release -p api-service
+
+# ── Runtime stage ───────────────────────────────────────────────────────────────
+# TODO why debian? why not alpine linux?
+FROM debian:bookworm-slim AS runtime
+
+# Curl is added to allow docker compose to do a health check.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/api-service /usr/local/bin/api-service
+
+EXPOSE 8080
+
+CMD ["/usr/local/bin/api-service"]

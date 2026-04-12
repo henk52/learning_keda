@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-tests
+  namespace: testing-keda
+data:
+  test_api_server_fast_and_slow.js: |
+    import http from 'k6/http';
+    import { sleep } from 'k6';
+
+    export const options = {
+      vus: 40,
+      duration: '30s',
+    };
+
+    export default function () {
+      // 67% fast, 33% slow
+      if (Math.random() < 0.67) {
+        http.get('http://api-service:8080/fast');
+      } else {
+        http.get('http://api-service:8080/slow');
+      }
+    }
+  test_api_service_health.js: |
+    import http from 'k6/http';
+    import { sleep } from 'k6';
+
+    export const options = {
+      vus: 10,
+      duration: '30s',
+    };
+
+    export default function () {
+      http.get('http://api-service:8080/health');
+      sleep(1);
+    }
+  test_grafana_health.js: |
+    import http from 'k6/http';
+    import { sleep } from 'k6';
+
+    export const options = {
+      vus: 10,
+      duration: '30s',
+    };
+
+    export default function () {
+      http.get('http://otel-lgtm:3000/api/health');
+      sleep(1);
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6
+  namespace: testing-keda
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6
+          args:
+            - run
+            - /k6_tests/test_api_server_fast_and_slow.js
+          env:
+            - name: K6_OTEL_EXPORTER_TYPE
+              value: http
+            - name: K6_OTEL_HTTP_EXPORTER_ENDPOINT
+              value: http://otel-lgtm:4318
+          ports:
+            - name: k6-api
+              containerPort: 6565
+          volumeMounts:
+            - name: k6-tests
+              mountPath: /k6_tests
+      volumes:
+        - name: k6-tests
+          configMap:
+            name: k6-tests

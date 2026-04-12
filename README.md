@@ -59,6 +59,7 @@ Extends native k8s scaling to scale on any metrics from e.g. Prometheus, like ca
 - [Performance Testing your web app with k6](https://www.youtube.com/watch?v=Hu1K2ZGJ_K4)
   - [performance-testing-with-k6](https://github.com/cajames/performance-testing-with-k6)
 - [How to do Performance Testing with k6](https://www.youtube.com/watch?v=ghuo8m7AXEM)
+- [Basics of load testing with k6 and Grafana in 20 minutes](https://www.youtube.com/watch?v=gvounvDSDGg)
 
 - TODO how to run the test
   - external from k8s, on machine with k6 installed.
@@ -124,3 +125,23 @@ docker compose up --build
 
 - How to deploy to minikube.
 - use kedra to scale the api-emulator.
+
+
+## Prompts
+
+- Please create a k8s deployment yaml for otel-lgtm in docker-compose.yml in namespace testing_keda
+- Please create a k8s deployment yaml for k6 in docker-compose.yml in namespace testing_keda
+- Please a bash script that will build the api-service-emulator and push to the minikube container registry in the script deployment/build_api_service_image_for_minikube.sh
+- Please create a k8s deployment yaml for api-service in docker-compose.yml in namespace testing_keda using the minikube containr registry for the image
+
+## Deployment
+
+### Deployment in docker-compose
+
+### Deployment in Minikube
+
+- minikube start
+- ./deployment/build_api_service_image_for_minikube.sh
+- minikube image ls
+- ~/deployment/create.sh
+- kubectl port-forward -n testing-keda svc/otel-lgtm 3000:3000

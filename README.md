@@ -21,6 +21,12 @@ Extends native k8s scaling to scale on any metrics from e.g. Prometheus, like ca
   - [load testing](https://k6.io/)
 - [Kubernetes Notifications, Troubleshooting, And Automation With Robusta](https://www.youtube.com/watch?v=2P76WVVua8w)
 
+- [Setting Up Load Testing and Monitoring with Docker, k6, Prometheus, Grafana, and InfluxDB](https://justinecodez.medium.com/setting-up-load-testing-and-monitoring-with-docker-k6-prometheus-grafana-and-influxdb-f311b8f1f271)
+- [Open Source Load Testing with k6, Docker, Prometheus, and Grafana ](https://dev.to/leading-edje/open-source-load-testing-with-k6-docker-prometheus-and-grafana-5ej6)
+- [Beautiful Load Testing With K6 and Docker Compose](https://medium.com/swlh/beautiful-load-testing-with-k6-and-docker-compose-4454edb3a2e3)
+- [Setup Autoscaling with KEDA](https://keda.sh/docs/2.19/setupscaler/)
+
+
 ### Vocabulary
 
 - KEDA - Kubernetes Event Driven Autoscaler.
@@ -42,6 +48,9 @@ Extends native k8s scaling to scale on any metrics from e.g. Prometheus, like ca
 - HPA - for scaling from 1 to N.
 - Scale rule - e.g. if 5 msg in queue then scale containers.
 
+## keda
+
+
 
 ## Testing it out in minikube
 
@@ -53,6 +62,48 @@ Extends native k8s scaling to scale on any metrics from e.g. Prometheus, like ca
 
 - alias mk=minikube
 - mk start
+
+### Installing KEDA
+
+- [Getting Started with Autoscaling in Kubernetes with KEDA](https://medium.com/@livewyer/getting-started-with-autoscaling-in-kubernetes-with-keda-210386e45488)
+
+- helm repo add kedacore https://kedacore.github.io/charts
+- helm repo update
+- helm install keda kedacore/keda --version 2.17.1 --create-namespace --namespace keda --wait
+- look at what is installed
+  - kubectl get pods -n keda
+  - kubectl describe deployment keda-operator-metrics-apiserver -n keda
+  - kubectl get apiservices | grep metrics
+  - kubectl api-resources | grep keda
+
+
+#### Output from KEDA installation
+
+```text
+Get started by deploying Scaled Objects to your cluster:
+    - Information about Scaled Objects : https://keda.sh/docs/latest/concepts/
+    - Samples: https://github.com/kedacore/samples
+
+Get information about the deployed ScaledObjects:
+  kubectl get scaledobject [--namespace <namespace>]
+
+Get details about a deployed ScaledObject:
+  kubectl describe scaledobject <scaled-object-name> [--namespace <namespace>]
+
+Get information about the deployed ScaledObjects:
+  kubectl get triggerauthentication [--namespace <namespace>]
+
+Get details about a deployed ScaledObject:
+  kubectl describe triggerauthentication <trigger-authentication-name> [--namespace <namespace>]
+
+Get an overview of the Horizontal Pod Autoscalers (HPA) that KEDA is using behind the scenes:
+  kubectl get hpa [--all-namespaces] [--namespace <namespace>]
+
+Learn more about KEDA:
+- Documentation: https://keda.sh/
+- Support: https://keda.sh/support/
+- File an issue: https://github.com/kedacore/keda/issues/new/choose
+```
 
 ## K6 website performance test
 
@@ -123,8 +174,7 @@ Usage: `docker compose run k6 run /scripts/my_yest.js`
 TODO remember to '--build' if the rust app have been updatd.
 docker compose up --build
 
-- How to deploy to minikube.
-- use kedra to scale the api-emulator.
+- use keda to scale the api-emulator.
 
 
 ## Prompts
